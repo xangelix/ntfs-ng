@@ -71,7 +71,7 @@ dependencies = [
 
 [[package]]
 name = "ntfs-ng"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "ntfs-ng-fuzz"
