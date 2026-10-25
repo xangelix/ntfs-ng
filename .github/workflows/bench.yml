@@ -1,7 +1,8 @@
 name: Benchmarks
 
 # Every push to main records the numbers; every pull request is compared against its base on
-# the same runner; a weekly run and manual runs measure larger corpora on every platform.
+# the same runner, by runs of the two that take turns; a weekly run and manual runs measure
+# larger corpora on every platform.
 on:
   push:
     branches: [main]
@@ -11,6 +12,7 @@ on:
       - "benches/**"
       - "examples/**"
       - "Cargo.toml"
+      - "scripts/criterion-*"
       - ".github/workflows/bench.yml"
   schedule:
     - cron: "17 4 * * 1"
@@ -98,33 +100,31 @@ jobs:
       # baseline directories whose measurements the cache cleaned out, which every benchmark
       # then fails to compare against. Each run starts from none.
       - name: Start from no measurements
-        run: rm -rf target/criterion
+        run: rm -rf target/criterion target/criterion-ab
 
-      - name: Benchmark the base revision
+      # The base revision and this one take turns (base, head, head, base), so that both see
+      # the same machine; a benchmark changed only if its runs say so beyond their own spread.
+      - name: Compare with the base revision, runs alternating
         if: github.event_name == 'pull_request'
         env:
           NTFS_NG_BENCH_RECORDS: "100000"
         run: |
-          git checkout --quiet "${{ github.event.pull_request.base.sha }}"
-          cargo bench --all-features -- --save-baseline base --noplot || echo "::notice::the base revision has no comparable benchmarks"
-          git checkout --quiet "${{ github.sha }}"
+          ./scripts/criterion-ab.sh "${{ github.event.pull_request.base.sha }}" \
+            --warm-up-time 1 --measurement-time 3 > criterion-ab.md \
+            || echo "::notice::the base revision has no comparable benchmarks"
+          tee -a "$GITHUB_STEP_SUMMARY" < criterion-ab.md
 
-      - name: Benchmark this revision
+      - name: Record this revision
+        if: github.event_name != 'pull_request'
         env:
           NTFS_NG_BENCH_RECORDS: "100000"
-        run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            cargo bench --all-features -- --baseline base --noplot
-          else
-            cargo bench --all-features -- --noplot
-          fi
-
-      - name: Compare
-        if: github.event_name == 'pull_request'
-        run: python3 scripts/criterion-compare.py target --threshold 10 | tee -a "$GITHUB_STEP_SUMMARY"
+        run: cargo bench --all-features -- --noplot
 
       - name: Upload Criterion reports
         uses: actions/upload-artifact@v7
         with:
           name: criterion
-          path: target/criterion
+          path: |
+            target/criterion
+            target/criterion-ab
+          if-no-files-found: ignore

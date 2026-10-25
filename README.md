@@ -59,8 +59,9 @@ cache warm. Run `./scripts/bench.sh` to reproduce on synthetic corpora, or pass 
 
 The benchmark suites go well beyond that: Criterion micro-benchmarks of every parser
 (`benches/parsers.rs`) and of the engine by projection, thread count, chunk size, delivery
-order, record size and stream kind (`benches/engine.rs`), run on every pull request against its
-base revision (`.github/workflows/bench.yml`).
+order, record size and stream kind (`benches/engine.rs`). Every pull request is compared with
+its base revision, runs of the two taking turns on one runner (`scripts/criterion-ab.sh`,
+`.github/workflows/bench.yml`).
 
 ## Guarantees
 
