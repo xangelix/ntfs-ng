@@ -94,6 +94,12 @@ jobs:
       - name: Cache dependencies
         uses: swatinem/rust-cache@v2
 
+      # The cache restores target/, and with it what an earlier run left of target/criterion:
+      # baseline directories whose measurements the cache cleaned out, which every benchmark
+      # then fails to compare against. Each run starts from none.
+      - name: Start from no measurements
+        run: rm -rf target/criterion
+
       - name: Benchmark the base revision
         if: github.event_name == 'pull_request'
         env:
