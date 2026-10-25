@@ -1,6 +1,6 @@
 [package]
 name = "ntfs-ng"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.99"
 description = "Fast, hardened NTFS and $MFT parsing: zero-copy records, a parallel MFT scan engine, path resolution with explicit policies, and volume streams."
