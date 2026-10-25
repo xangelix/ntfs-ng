@@ -24,6 +24,10 @@ testing = ["std"]
 [dev-dependencies]
 criterion = "0.8.2"
 
+# Instruction counts of the parsers (benches/instructions.rs), under Valgrind: Linux only.
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+gungraun = "0.20.0"
+
 [lints.rust]
 unsafe_code = "forbid"
 missing_docs = "warn"
@@ -72,3 +76,12 @@ required-features = ["testing"]
 name = "engine"
 harness = false
 required-features = ["testing"]
+
+# Instruction counts under Valgrind: only when asked for (`--bench instructions`), as they need
+# Valgrind and `gungraun-runner`.
+[[bench]]
+name = "instructions"
+harness = false
+required-features = ["testing"]
+bench = false
+test = false

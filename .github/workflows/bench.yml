@@ -1,8 +1,8 @@
 name: Benchmarks
 
 # Every push to main records the numbers; every pull request is compared against its base on
-# the same runner, by runs of the two that take turns; a weekly run and manual runs measure
-# larger corpora on every platform.
+# the same runner, by wall-clock runs that take turns and by instruction counts; a weekly run and
+# manual runs measure larger corpora on every platform.
 on:
   push:
     branches: [main]
@@ -13,6 +13,7 @@ on:
       - "examples/**"
       - "Cargo.toml"
       - "scripts/criterion-*"
+      - "scripts/instructions-compare.py"
       - ".github/workflows/bench.yml"
   schedule:
     - cron: "17 4 * * 1"
@@ -128,3 +129,51 @@ jobs:
             target/criterion
             target/criterion-ab
           if-no-files-found: ignore
+
+  # The parsers' instruction counts under Valgrind (benches/instructions.rs): exact whatever the
+  # runner's load or the code's alignment, so that parsers a change did not touch count the same.
+  instructions:
+    name: Instructions (${{ github.event_name == 'pull_request' && 'head vs base' || 'record' }})
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Cache dependencies
+        uses: swatinem/rust-cache@v2
+
+      - name: Install Valgrind, and gungraun's runner at the dev-dependency's version
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq valgrind
+          version="$(cargo metadata --format-version 1 --locked | python3 -c 'import json, sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "gungraun"))')"
+          cargo install --locked gungraun-runner --version "$version"
+
+      # As target/criterion above: no counts of an earlier run, which a run compares with.
+      - name: Start from no counts
+        run: rm -rf target/gungraun
+
+      - name: Count the base revision
+        if: github.event_name == 'pull_request'
+        run: |
+          git checkout --quiet "${{ github.event.pull_request.base.sha }}"
+          cargo bench --all-features --bench instructions -- --save-baseline=base --nosummary \
+            || echo "::notice::the base revision has no instruction benchmarks"
+          git checkout --quiet "${{ github.sha }}"
+
+      - name: Count this revision
+        run: |
+          baseline=()
+          if [ "${{ github.event_name }}" = "pull_request" ]; then baseline=(--baseline=base); fi
+          cargo bench --all-features --bench instructions -- "${baseline[@]}" --output-format=json \
+            > instructions.jsonl
+
+      - name: Compare
+        run: python3 scripts/instructions-compare.py instructions.jsonl --threshold 1 | tee -a "$GITHUB_STEP_SUMMARY"

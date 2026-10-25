@@ -1,12 +1,13 @@
-//! The inputs of the parser benchmarks (`parsers.rs`). Each is a batch of different inputs of
-//! one kind, made from a fixed seed: an iteration parses all of them, so that it measures a mix
-//! rather than one input's best case, and lasts long enough that the harness's own cost and where
-//! the code happens to be aligned weigh little.
+//! The inputs of the parser benchmarks, shared by their wall-clock runs (`parsers.rs`) and their
+//! instruction counts (`instructions.rs`). Each is a batch of different inputs of one kind, made
+//! from a fixed seed: an iteration parses all of them, so that it measures a mix rather than one
+//! input's best case, and lasts long enough that the harness's own cost and where the code
+//! happens to be aligned weigh little.
 //!
 //! Names and mapping pairs, whose parsers branch on every character or pair, come as a pool of
-//! [`ROTATION`] batches that runs take in turn ([`Rotation`]): the same batch every iteration
-//! lets a branch predictor learn its every branch, and measures a best case that no caller sees,
-//! larger or smaller depending on where the code lies.
+//! [`ROTATION`] batches that wall-clock runs take in turn ([`Rotation`]): the same batch every
+//! iteration lets a branch predictor learn its every branch, and measures a best case that no
+//! caller sees, larger or smaller depending on where the code lies.
 
 #![allow(
     clippy::unwrap_used,

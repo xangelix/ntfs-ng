@@ -2,7 +2,8 @@
 //!
 //! Every benchmark parses a batch of different inputs per iteration (`common`), and names and
 //! mapping pairs a different batch each time: its throughput is per record, name, value, run or
-//! byte, so that the time per item stays comparable however large the batch.
+//! byte, so that the time per item stays comparable however large the batch. `instructions.rs`
+//! counts the instructions of the same work.
 
 #![allow(
     clippy::unwrap_used,
