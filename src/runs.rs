@@ -78,6 +78,7 @@ impl<'a> Pairs<'a> {
         self.terminated
     }
 
+    #[inline]
     fn read(&mut self) -> Result<Option<Pair>, FormatError> {
         let at = self.base + self.at;
         // The attribute's end ends the pairs as the zero byte does.
@@ -144,6 +145,7 @@ impl<'a> Pairs<'a> {
 impl Iterator for Pairs<'_> {
     type Item = Result<Pair, FormatError>;
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         if self.done {
             return None;
