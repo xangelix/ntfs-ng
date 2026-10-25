@@ -1,0 +1,124 @@
+name: Benchmarks
+
+# Every push to main records the numbers; every pull request is compared against its base on
+# the same runner; a weekly run and manual runs measure larger corpora on every platform.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - "src/**"
+      - "benches/**"
+      - "examples/**"
+      - "Cargo.toml"
+      - ".github/workflows/bench.yml"
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      records:
+        description: "Records in the synthetic corpus"
+        default: "2000000"
+      iterations:
+        description: "Iterations per workload"
+        default: "7"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bench-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  workloads:
+    name: Workloads (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest, ubuntu-24.04-arm]
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Cache dependencies
+        uses: swatinem/rust-cache@v2
+
+      - name: Machine
+        shell: bash
+        run: |
+          echo "### ${{ matrix.os }}" >> "$GITHUB_STEP_SUMMARY"
+          (nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo "$NUMBER_OF_PROCESSORS") | sed 's/^/cores: /' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Run the workloads
+        shell: bash
+        run: |
+          ./scripts/bench.sh \
+            --records "${{ github.event.inputs.records || '1000000' }}" \
+            --iterations "${{ github.event.inputs.iterations || '5' }}" \
+            --output bench-results
+
+      - name: Summary
+        shell: bash
+        run: cat bench-results/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload results
+        uses: actions/upload-artifact@v7
+        with:
+          name: workloads-${{ matrix.os }}
+          path: bench-results
+
+  criterion:
+    name: Criterion (${{ github.event_name == 'pull_request' && 'head vs base' || 'record' }})
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Cache dependencies
+        uses: swatinem/rust-cache@v2
+
+      - name: Benchmark the base revision
+        if: github.event_name == 'pull_request'
+        env:
+          NTFS_NG_BENCH_RECORDS: "100000"
+        run: |
+          git checkout --quiet "${{ github.event.pull_request.base.sha }}"
+          cargo bench --all-features -- --save-baseline base --noplot || echo "::notice::the base revision has no comparable benchmarks"
+          git checkout --quiet "${{ github.sha }}"
+
+      - name: Benchmark this revision
+        env:
+          NTFS_NG_BENCH_RECORDS: "100000"
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            cargo bench --all-features -- --baseline base --noplot
+          else
+            cargo bench --all-features -- --noplot
+          fi
+
+      - name: Compare
+        if: github.event_name == 'pull_request'
+        run: python3 scripts/criterion-compare.py target --threshold 10 | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Criterion reports
+        uses: actions/upload-artifact@v7
+        with:
+          name: criterion
+          path: target/criterion

@@ -1,0 +1,7 @@
+[default.extend-words]
+# NTFS structure signatures and names.
+INDX = "INDX"
+RCRD = "RCRD"
+RSTR = "RSTR"
+BAAD = "BAAD"
+ba = "ba"

@@ -1,0 +1,57 @@
+[package]
+name = "ntfs-ng-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4.13"
+ntfs-ng = { path = "..", features = ["testing"] }
+
+# A workspace of its own: fuzzing builds with sanitizers and a nightly toolchain.
+[workspace]
+
+[[bin]]
+name = "record"
+path = "fuzz_targets/record.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "values"
+path = "fuzz_targets/values.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "lznt1"
+path = "fuzz_targets/lznt1.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pages"
+path = "fuzz_targets/pages.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mft_scan"
+path = "fuzz_targets/mft_scan.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "volume"
+path = "fuzz_targets/volume.rs"
+test = false
+doc = false
+bench = false

@@ -1,0 +1,162 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test-linux:
+    name: Lints & tests (Linux)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
+
+      - name: Install typos and cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: typos,cargo-nextest
+
+      - name: Cache dependencies
+        uses: swatinem/rust-cache@v2
+
+      - name: Check typos
+        run: ./scripts/check.sh typos
+
+      - name: Check formatting
+        run: ./scripts/check.sh fmt
+
+      - name: Check lints (every feature combination)
+        run: ./scripts/check.sh clippy
+
+      - name: Run tests (std, testing, and no_std)
+        run: ./scripts/check.sh test
+
+      - name: Check documentation
+        run: ./scripts/check.sh docs
+
+      - name: Check no_std and wasm32 builds
+        run: ./scripts/check.sh nostd
+
+  test-native:
+    name: Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-24.04-arm]
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Cache dependencies
+        uses: swatinem/rust-cache@v2
+
+      - name: Run tests
+        shell: bash
+        run: ./scripts/check.sh test
+
+  msrv:
+    name: Minimum supported Rust version
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Read the MSRV
+        id: msrv
+        run: echo "version=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml)" >> "$GITHUB_OUTPUT"
+
+      - name: Install the MSRV toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+
+      - name: Cache dependencies
+        uses: swatinem/rust-cache@v2
+
+      - name: Check
+        run: ./scripts/check.sh msrv
+
+  fuzz-smoke:
+    name: Fuzzing smoke run
+    runs-on: ubuntu-latest
+    needs: [test-linux]
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install nightly
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+
+      - name: Install cargo-fuzz
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+
+      - name: Cache dependencies
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+
+      - name: Fuzz every target briefly
+        env:
+          FUZZ_SECONDS: "30"
+        run: ./scripts/check.sh fuzz-smoke
+
+      - name: Upload crashes
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts
+
+  bench-smoke:
+    name: Benchmarks compile and run
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Cache dependencies
+        uses: swatinem/rust-cache@v2
+
+      - name: Run every benchmark once and every workload on a small corpus
+        run: ./scripts/check.sh bench-smoke
+
+      - name: Summary
+        run: cat target/bench-smoke/summary.md >> "$GITHUB_STEP_SUMMARY"

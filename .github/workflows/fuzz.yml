@@ -1,0 +1,78 @@
+name: Fuzz
+
+# Long fuzzing runs: nightly, and on demand. Each target gets its own job; the corpus is cached
+# between runs so coverage accumulates.
+on:
+  schedule:
+    - cron: "41 2 * * *"
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: "Seconds per target"
+        default: "1800"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fuzz:
+    name: Fuzz ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [record, values, lznt1, pages, mft_scan, volume]
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install nightly
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+
+      - name: Install cargo-fuzz
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+
+      - name: Cache dependencies
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+
+      - name: Restore the corpus
+        uses: actions/cache@v4
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-${{ matrix.target }}-
+
+      - name: Seed the corpus
+        run: cargo run --release --features testing --example fuzz-seeds -- fuzz/corpus
+
+      - name: Fuzz
+        working-directory: fuzz
+        shell: bash
+        run: |
+          # Inputs that once failed (fuzz/regressions, tracked) are replayed with the corpus; new
+          # inputs go to the corpus, the first directory.
+          corpora=("corpus/${{ matrix.target }}")
+          if [ -d "regressions/${{ matrix.target }}" ]; then
+            corpora+=("regressions/${{ matrix.target }}")
+          fi
+          # cargo-fuzz defaults to the target it was built for (a prebuilt one is musl, which
+          # the sanitizers cannot instrument): fuzz for the host.
+          host="$(rustc +nightly -vV | sed -n 's/^host: //p')"
+          cargo +nightly fuzz run --target "$host" ${{ matrix.target }} "${corpora[@]}" -- \
+            -max_total_time=${{ github.event.inputs.seconds || '900' }} -timeout=10 -rss_limit_mb=4096
+
+      - name: Upload crashes
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}

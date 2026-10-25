@@ -1,0 +1,74 @@
+[package]
+name = "ntfs-ng"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+description = "Fast, hardened NTFS and $MFT parsing: zero-copy records, a parallel MFT scan engine, path resolution with explicit policies, and volume streams."
+license = "MIT OR Apache-2.0"
+authors = ["Cody Wyatt Neiman (xangelix) <neiman@cody.to>"]
+repository = "https://github.com/xangelix/ntfs-ng"
+readme = "README.md"
+keywords = ["ntfs", "mft", "filesystem", "parser", "windows"]
+categories = ["filesystem", "parser-implementations", "no-std"]
+include = ["/src/**/*", "/LICENSE-*", "/README.md", "/CHANGELOG.md", "/DESIGN.md"]
+
+[features]
+default = ["std"]
+# Sources, volumes, streams, the parallel scan engine and the directory index.
+std = []
+# Builders of synthetic records, $MFT dumps and volume images, for tests here and in callers.
+testing = ["std"]
+
+[dependencies]
+
+[dev-dependencies]
+criterion = "0.8.2"
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+unreachable_pub = "warn"
+
+[lints.clippy]
+# Hostile input never panics the parser: no indexing that can fail, no unwraps.
+indexing_slicing = "deny"
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+
+[profile.bench]
+codegen-units = 1
+lto = "thin"
+debug = "line-tables-only"
+
+[[example]]
+name = "ntfs-bench"
+required-features = ["testing"]
+
+[[example]]
+name = "fuzz-seeds"
+required-features = ["testing"]
+
+[lib]
+# `cargo bench` hands its arguments (`--noplot`, `--save-baseline`) to every benchmarked target;
+# the library's test harness refuses Criterion's, and the library has no benchmarks of its own.
+bench = false
+
+[[bench]]
+name = "parsers"
+harness = false
+required-features = ["testing"]
+
+[[bench]]
+name = "engine"
+harness = false
+required-features = ["testing"]

@@ -1,0 +1,57 @@
+name: Windows live volumes
+
+# Real NTFS volumes, read raw on Windows runners (where jobs run as an administrator): a volume
+# made for the purpose, formatted with 1 KiB and with 4 KiB file records and filled with every
+# kind of file (scripts/windows-live-fixtures.ps1); a shadow copy of it; and the runner's own
+# system volume. tests/live_windows.rs checks what ntfs-ng reads against what Windows reports.
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-live-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  live:
+    name: Live volumes (${{ matrix.os }}, ${{ matrix.record-size }}-byte records)
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+        record-size: [1024, 4096]
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Cache dependencies
+        uses: swatinem/rust-cache@v2
+
+      - name: Build the live tests
+        run: cargo test --release --all-features --test live_windows --no-run
+
+      - name: Prepare a volume, and a shadow copy of it
+        shell: pwsh
+        run: >-
+          ./scripts/windows-live-fixtures.ps1 -Letter N -RecordSize ${{ matrix.record-size }}
+          -Vhd "$env:RUNNER_TEMP\ntfs-ng-live.vhdx" -Shadow
+
+      - name: Read them raw
+        run: cargo test --release --all-features --test live_windows -- --ignored --nocapture --test-threads 1
