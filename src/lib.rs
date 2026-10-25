@@ -66,7 +66,7 @@ pub mod volume;
 #[cfg(feature = "testing")]
 pub mod testing;
 
-pub use attribute::{Attribute, Attributes, Form, NonResident};
+pub use attribute::{Attribute, Attributes, Form, NonResident, ResidentHeader};
 pub use boot::BootSector;
 #[cfg(feature = "std")]
 pub use error::Error;

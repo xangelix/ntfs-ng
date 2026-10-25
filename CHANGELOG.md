@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- `runs::Pairs`: mapping pairs read and checked without counting VCNs, each a `runs::Pair`
+  (length, LCN and offset), for callers with rules of their own about the runs' total.
+- `terminated()` on `Pairs` and `MappingPairs`: whether the zero byte ended the pairs, rather
+  than the end of their attribute.
+- Every attribute header field: `Attribute::resident_header` (`ResidentHeader`: the value's
+  length and offset, the indexed byte and the reserved one), and `NonResident`'s
+  `mapping_pairs_offset` and `reserved`.
+- `MappingPairs` checks a run's VCN range after the rest of its pair: a pair also invalid on the
+  volume fails with that error, not `VcnOverflow`.
+
 ## 0.1.0 (unreleased)
 
 First release.

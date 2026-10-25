@@ -7,6 +7,9 @@
 //! last allocated run. A zero header byte ends the pairs.
 //!
 //! An attribute whose mapping pairs start at its very end has none: an empty stream.
+//!
+//! [`MappingPairs`] reads the runs with the VCN each starts at; [`Pairs`] reads the same pairs
+//! without counting VCNs, for a caller with rules of its own about the runs' total.
 
 use crate::{
     FormatError,
@@ -24,42 +27,58 @@ pub struct Run {
     pub lcn: Option<u64>,
 }
 
-/// The runs of a mapping pairs array, in order: up to the zero byte that ends them, or the end
+/// One mapping pair as stored: a run's length and where it is, without the VCN it starts at.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Pair {
+    /// Clusters in the run, never 0.
+    pub length: u64,
+    /// The first cluster on the volume, or `None` for a sparse run.
+    pub lcn: Option<u64>,
+    /// The pair's offset in its record.
+    pub offset: usize,
+}
+
+/// The pairs of a mapping pairs array, in order: up to the zero byte that ends them, or the end
 /// of their attribute (as ntfs-3g and Linux's ntfs3 read pairs that fill it). The first invalid
 /// pair ends the iteration with its error.
+///
+/// Each pair is read and checked as [`MappingPairs`] reads it, but no VCNs are counted: a
+/// caller that keeps its own count reads every pair, whatever VCN the runs reach. Once the
+/// pairs are read, [`Self::terminated`] tells which end they had.
 #[derive(Clone, Debug)]
-pub struct MappingPairs<'a> {
+pub struct Pairs<'a> {
     data: &'a [u8],
     /// The array's offset in its record, for errors.
     base: usize,
     at: usize,
     lcn: i64,
-    vcn: u64,
     done: bool,
+    terminated: bool,
 }
 
-impl<'a> MappingPairs<'a> {
+impl<'a> Pairs<'a> {
     /// The pairs in `data`, which starts at offset `base` of its record and runs to the end of
-    /// its attribute, describing a stream from `first_vcn`.
+    /// its attribute.
     #[must_use]
-    pub const fn new(data: &'a [u8], base: usize, first_vcn: u64) -> Self {
+    pub const fn new(data: &'a [u8], base: usize) -> Self {
         Self {
             data,
             base,
             at: 0,
             lcn: 0,
-            vcn: first_vcn,
             done: data.is_empty(),
+            terminated: false,
         }
     }
 
-    /// The VCN after the last run read so far.
+    /// Whether the zero byte that ends the pairs was read: `false` until it is, and for pairs
+    /// that ran to the end of their attribute (or hold none).
     #[must_use]
-    pub const fn next_vcn(&self) -> u64 {
-        self.vcn
+    pub const fn terminated(&self) -> bool {
+        self.terminated
     }
 
-    fn read(&mut self) -> Result<Option<Run>, FormatError> {
+    fn read(&mut self) -> Result<Option<Pair>, FormatError> {
         let at = self.base + self.at;
         // The attribute's end ends the pairs as the zero byte does.
         let Some(&header) = self.data.get(self.at) else {
@@ -67,6 +86,7 @@ impl<'a> MappingPairs<'a> {
         };
         self.at += 1;
         if header == 0 {
+            self.terminated = true;
             return Ok(None);
         }
         let length_size = usize::from(header & 0x0f);
@@ -84,16 +104,11 @@ impl<'a> MappingPairs<'a> {
         if length == 0 {
             return Err(FormatError::ZeroLengthRun { at });
         }
-        let vcn = self.vcn;
-        self.vcn = vcn
-            .checked_add(length)
-            .filter(|end| *end <= i64::MAX as u64)
-            .ok_or(FormatError::VcnOverflow { at })?;
         if offset_size == 0 {
-            return Ok(Some(Run {
-                vcn,
+            return Ok(Some(Pair {
                 length,
                 lcn: None,
+                offset: at,
             }));
         }
         let delta = signed(take(
@@ -118,11 +133,60 @@ impl<'a> MappingPairs<'a> {
                 length,
             })?;
         self.at += offset_size;
-        Ok(Some(Run {
-            vcn,
+        Ok(Some(Pair {
             length,
             lcn: Some(lcn),
+            offset: at,
         }))
+    }
+}
+
+impl Iterator for Pairs<'_> {
+    type Item = Result<Pair, FormatError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.done {
+            return None;
+        }
+        let pair = self.read();
+        if !matches!(pair, Ok(Some(_))) {
+            self.done = true;
+        }
+        pair.transpose()
+    }
+}
+
+impl core::iter::FusedIterator for Pairs<'_> {}
+
+/// The runs of a mapping pairs array, in order, each with the VCN it starts at: the pairs
+/// ([`Pairs`]), and a run past the largest VCN (`i64::MAX`) as an error that ends them.
+#[derive(Clone, Debug)]
+pub struct MappingPairs<'a> {
+    pairs: Pairs<'a>,
+    vcn: u64,
+}
+
+impl<'a> MappingPairs<'a> {
+    /// The pairs in `data`, which starts at offset `base` of its record and runs to the end of
+    /// its attribute, describing a stream from `first_vcn`.
+    #[must_use]
+    pub const fn new(data: &'a [u8], base: usize, first_vcn: u64) -> Self {
+        Self {
+            pairs: Pairs::new(data, base),
+            vcn: first_vcn,
+        }
+    }
+
+    /// The VCN after the last run read so far.
+    #[must_use]
+    pub const fn next_vcn(&self) -> u64 {
+        self.vcn
+    }
+
+    /// Whether the zero byte that ends the pairs was read ([`Pairs::terminated`]).
+    #[must_use]
+    pub const fn terminated(&self) -> bool {
+        self.pairs.terminated()
     }
 }
 
@@ -130,14 +194,24 @@ impl Iterator for MappingPairs<'_> {
     type Item = Result<Run, FormatError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.done {
-            return None;
-        }
-        let run = self.read();
-        if !matches!(run, Ok(Some(_))) {
-            self.done = true;
-        }
-        run.transpose()
+        let pair = match self.pairs.next()? {
+            Ok(pair) => pair,
+            Err(error) => return Some(Err(error)),
+        };
+        let vcn = self.vcn;
+        let Some(end) = vcn
+            .checked_add(pair.length)
+            .filter(|end| *end <= i64::MAX as u64)
+        else {
+            self.pairs.done = true;
+            return Some(Err(FormatError::VcnOverflow { at: pair.offset }));
+        };
+        self.vcn = end;
+        Some(Ok(Run {
+            vcn,
+            length: pair.length,
+            lcn: pair.lcn,
+        }))
     }
 }
 
@@ -244,7 +318,70 @@ mod tests {
         long.push(0);
         assert!(matches!(
             runs(&long).unwrap_err(),
-            FormatError::VcnOverflow { .. }
+            FormatError::VcnOverflow { at: 0 }
+        ));
+    }
+
+    #[test]
+    fn pairs_count_no_vcns_and_tell_how_they_ended() {
+        // Two sparse runs past the largest VCN: every pair is read, then the zero byte.
+        let mut huge = vec![0x08];
+        huge.extend((1u64 << 62).to_le_bytes());
+        huge.extend([0x08]);
+        huge.extend((3u64 << 62).to_le_bytes());
+        huge.extend([0x11, 1, 5, 0]);
+        let mut pairs = Pairs::new(&huge, 100);
+        let read: Vec<_> = pairs.by_ref().collect::<Result<_, _>>().unwrap();
+        assert_eq!(
+            read,
+            [
+                Pair {
+                    length: 1 << 62,
+                    lcn: None,
+                    offset: 100
+                },
+                Pair {
+                    length: 3 << 62,
+                    lcn: None,
+                    offset: 109
+                },
+                Pair {
+                    length: 1,
+                    lcn: Some(5),
+                    offset: 118
+                },
+            ]
+        );
+        assert!(pairs.terminated());
+        // The runs stop at the second, and nothing is read after it.
+        let mut with_vcns = MappingPairs::new(&huge, 100, 0);
+        assert!(with_vcns.next().unwrap().is_ok());
+        assert!(matches!(
+            with_vcns.next().unwrap().unwrap_err(),
+            FormatError::VcnOverflow { at: 109 }
+        ));
+        assert!(with_vcns.next().is_none());
+        assert!(!with_vcns.terminated());
+
+        // Pairs that fill their attribute, and none at all, are not terminated.
+        let mut filled = Pairs::new(&[0x11, 1, 1], 0);
+        assert_eq!(filled.by_ref().count(), 1);
+        assert!(!filled.terminated());
+        let mut empty = Pairs::new(&[], 0);
+        assert!(empty.next().is_none());
+        assert!(!empty.terminated());
+        let mut zero = MappingPairs::new(&[0], 0, 0);
+        assert!(zero.next().is_none());
+        assert!(zero.terminated());
+
+        // A run out of range on the volume fails as such, whatever VCN it would reach.
+        let mut far = vec![0x88];
+        far.extend(u64::MAX.to_le_bytes());
+        far.extend(1i64.to_le_bytes());
+        far.push(0);
+        assert!(matches!(
+            runs(&far).unwrap_err(),
+            FormatError::LcnRange { .. }
         ));
     }
 }

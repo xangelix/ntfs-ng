@@ -343,6 +343,18 @@ impl<'a> Attribute<'a> {
         self.is_resident() && byte(self.bytes, 0x16) & 1 != 0
     }
 
+    /// A resident attribute's own header fields, as stored and unchecked ([`Self::value`]
+    /// checks where the value is); `None` for another form.
+    #[must_use]
+    pub fn resident_header(&self) -> Option<ResidentHeader> {
+        self.is_resident().then(|| ResidentHeader {
+            value_length: le32(self.bytes, 0x10),
+            value_offset: le16(self.bytes, 0x14),
+            indexed: byte(self.bytes, 0x16),
+            reserved: byte(self.bytes, 0x17),
+        })
+    }
+
     /// A non-resident attribute's header and mapping pairs.
     ///
     /// # Errors
@@ -378,6 +390,8 @@ impl<'a> Attribute<'a> {
             data_size: le64(bytes, 0x30),
             initialized_size: le64(bytes, 0x38),
             total_allocated: (header_len == COMPRESSED_HEADER).then(|| le64(bytes, 0x40)),
+            mapping_pairs_offset: pairs_offset,
+            reserved: le32(bytes, 0x24),
             pairs,
             pairs_at: self.at + offset,
         })
@@ -423,6 +437,19 @@ pub enum Form<'a> {
     NonResident(NonResident<'a>),
 }
 
+/// The resident part of a header (0x10 to 0x18).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ResidentHeader {
+    /// The value's length.
+    pub value_length: u32,
+    /// Where the value starts in the attribute.
+    pub value_offset: u16,
+    /// The indexed flag (bit 0, set for `$FILE_NAME`s), as stored.
+    pub indexed: u8,
+    /// The byte after it, reserved.
+    pub reserved: u8,
+}
+
 /// The non-resident part of a header, with the mapping pairs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NonResident<'a> {
@@ -441,6 +468,10 @@ pub struct NonResident<'a> {
     pub initialized_size: u64,
     /// Bytes actually allocated, for compressed and sparse streams.
     pub total_allocated: Option<u64>,
+    /// Where the mapping pairs start in the attribute.
+    pub mapping_pairs_offset: u16,
+    /// The four bytes after the compression unit, reserved.
+    pub reserved: u32,
     pairs: &'a [u8],
     pairs_at: usize,
 }
@@ -529,6 +560,15 @@ mod tests {
         assert_eq!(attributes[0].value().unwrap(), b"value");
         assert_eq!(attributes[0].data_size().unwrap(), 5);
         assert!(attributes[0].non_resident().is_err());
+        assert_eq!(
+            attributes[0].resident_header(),
+            Some(ResidentHeader {
+                value_length: 5,
+                value_offset: 32,
+                indexed: 0,
+                reserved: 0
+            })
+        );
         assert_eq!(attributes[1].offset(), 40);
         assert!(attributes[1].is_unnamed());
 
@@ -563,6 +603,8 @@ mod tests {
         let parsed = Attribute::new(0, &data).unwrap().non_resident().unwrap();
         assert_eq!(parsed.runs().count(), 3);
         assert_eq!(parsed.data_size, 20_000);
+        assert_eq!((parsed.mapping_pairs_offset, parsed.reserved), (64, 0));
+        assert_eq!(Attribute::new(0, &data).unwrap().resident_header(), None);
         assert_eq!(parsed.clusters(), 6);
         assert_eq!(
             Attribute::new(0, &data).unwrap().data_size().unwrap(),
