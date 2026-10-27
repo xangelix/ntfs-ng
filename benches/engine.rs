@@ -107,9 +107,6 @@ fn scan(c: &mut Criterion) {
     let mft = Mft::from_file(data).unwrap();
     let mut group = c.benchmark_group("scan");
     group.throughput(Throughput::Bytes(data.len() as u64));
-    group
-        .sample_size(20)
-        .measurement_time(Duration::from_secs(8));
     let all = std::thread::available_parallelism().map_or(4, std::num::NonZeroUsize::get);
     // Each count once: the machine's own may be one of the others.
     let mut counts: Vec<usize> = [1, 2, 4, 8, 16, all]
@@ -150,9 +147,6 @@ fn index(c: &mut Criterion) {
     let data = corpus(1024);
     let mft = Mft::from_file(data).unwrap();
     let mut group = c.benchmark_group("index");
-    group
-        .sample_size(20)
-        .measurement_time(Duration::from_secs(8));
     group.throughput(Throughput::Elements(mft.records()));
     for (label, policy) in [
         ("live", PathPolicy::LIVE),
@@ -213,9 +207,6 @@ fn files(c: &mut Criterion) {
     let data = corpus(1024);
     let mft = Mft::from_file(data).unwrap();
     let mut group = c.benchmark_group("files");
-    group
-        .sample_size(20)
-        .measurement_time(Duration::from_secs(8));
     group.throughput(Throughput::Elements(mft.records()));
     let all = FileOptions {
         deleted: true,
@@ -303,7 +294,6 @@ fn streams(c: &mut Criterion) {
     let image = builder.build();
     let volume = Volume::open(image.bytes.as_slice()).unwrap();
     let mut group = c.benchmark_group("stream");
-    group.sample_size(20);
     for (label, at) in [("contiguous", 0usize), ("fragmented", 1), ("compressed", 2)] {
         let number = image.records[at].record;
         let mut buf = Vec::new();
@@ -332,5 +322,16 @@ fn streams(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, scan, index, files, streams);
-criterion_main!(benches);
+// Each benchmark's samples and time are its target's defaults, not its group's own, so that
+// the command line's `--sample-size` and `--measurement-time` override them.
+criterion_group! {
+    name = benches;
+    config = Criterion::default().sample_size(20).measurement_time(Duration::from_secs(8));
+    targets = scan, index, files
+}
+criterion_group! {
+    name = stream_benches;
+    config = Criterion::default().sample_size(20);
+    targets = streams
+}
+criterion_main!(benches, stream_benches);
