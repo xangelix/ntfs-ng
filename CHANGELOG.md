@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.2 (2026-10-27)
 
 - `Scan::run`, `Files::parents` and `Usage::parents` return only once their threads have
   ended, their thread-locals' destructors included: a scope waits for its threads' closures,
