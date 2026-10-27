@@ -25,6 +25,7 @@ use std::{
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         mpsc,
     },
+    thread::ScopedJoinHandle,
 };
 
 use crate::{
@@ -297,11 +298,13 @@ impl<'a, S: ReadAt> Scan<'a, S> {
         };
         let mut summary = std::thread::scope(|scope| {
             let (tx, rx) = mpsc::sync_channel::<(Chunk, P::Output, usize)>(window);
-            for worker in 0..threads {
-                let tx = tx.clone();
-                let (shared, plan) = (&shared, &plan);
-                scope.spawn(move || self.work(projection, shared, plan, worker, &tx));
-            }
+            let workers: Vec<_> = (0..threads)
+                .map(|worker| {
+                    let tx = tx.clone();
+                    let (shared, plan) = (&shared, &plan);
+                    scope.spawn(move || self.work(projection, shared, plan, worker, &tx))
+                })
+                .collect();
             drop(tx);
             let _stop = StopOnPanic(&shared);
             let mut summary = Summary::default();
@@ -334,6 +337,8 @@ impl<'a, S: ReadAt> Scan<'a, S> {
                     }
                 }
             }
+            // Every worker has dropped its sender; their threads may still be ending.
+            join_all(workers);
             summary
         });
         let counts = shared.counts.into_inner().unwrap_or_default();
@@ -558,6 +563,22 @@ struct Shared {
 struct Release {
     done: Mutex<u64>,
     ready: Condvar,
+}
+
+/// Joins every thread of a scope, then goes on with the first one's panic, if any. A scope waits
+/// for its threads' closures, not for the threads: one may still be ending (running its
+/// thread-locals' destructors) when the scope returns, and outlive the call that spawned it.
+/// Joining waits for the thread itself.
+pub(crate) fn join_all<'scope, T>(workers: impl IntoIterator<Item = ScopedJoinHandle<'scope, T>>) {
+    let mut panic = None;
+    for worker in workers {
+        if let Err(payload) = worker.join() {
+            panic.get_or_insert(payload);
+        }
+    }
+    if let Some(payload) = panic {
+        std::panic::resume_unwind(payload);
+    }
 }
 
 /// Stops the scan when dropped by a panic: a worker that panics leaves its chunk undelivered,
@@ -806,6 +827,62 @@ mod tests {
                 ControlFlow::Continue(())
             });
             assert!(matches!(result, Err(Error::Cancelled)), "{result:?}");
+        }
+    }
+
+    /// No thread of a scan outlives it: when `run` returns, every worker has ended, its
+    /// thread-locals' destructors included. (A scope alone waits for the workers' closures, not
+    /// for their threads: the `mft_scan` fuzz target's leak check once caught one still ending.)
+    #[test]
+    fn no_worker_outlives_its_scan() {
+        static STARTED: AtomicUsize = AtomicUsize::new(0);
+        static ENDED: AtomicUsize = AtomicUsize::new(0);
+
+        /// A thread-local whose destructor takes a while.
+        struct Slow;
+
+        impl Drop for Slow {
+            fn drop(&mut self) {
+                thread::sleep(std::time::Duration::from_millis(50));
+                ENDED.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        thread_local! {
+            static SLOW: Slow = {
+                STARTED.fetch_add(1, Ordering::SeqCst);
+                Slow
+            };
+        }
+
+        /// Touches `SLOW` on every worker.
+        struct Touch;
+
+        impl Projection for Touch {
+            type Output = ();
+            type Scratch = ();
+
+            fn scratch(&self) {
+                SLOW.with(|_| ());
+            }
+
+            fn begin(&self, (): &mut (), _: Chunk) {}
+
+            fn entry(&self, (): &mut (), (): &mut (), _: u64, _: Entry<'_>) {}
+        }
+
+        let (bytes, _) = mft(&CorpusConfig::realistic(2_000));
+        let mft = Mft::from_file(bytes.as_slice()).unwrap();
+        for ordered in [true, false] {
+            Scan::new(&mft)
+                .threads(4)
+                .chunk_bytes(32 << 10)
+                .ordered(ordered)
+                .run(&Touch, |_, ()| ControlFlow::Continue(()))
+                .unwrap();
+            let started = STARTED.load(Ordering::SeqCst);
+            assert!(started > 0);
+            assert_eq!(ENDED.load(Ordering::SeqCst), started, "ordered {ordered}");
         }
     }
 }

@@ -23,7 +23,7 @@ use crate::{
     index::{DirId, DirectoryBatch, DirectoryIndex, IndexBuilder, NONE, PathPolicy, best_name},
     record::{FileReference, Record},
     records,
-    scan::{Chunk, Entry, Projection, Scan},
+    scan::{Chunk, Entry, Projection, Scan, join_all},
     source::ReadAt,
     types,
     value::{FileName, Namespace, StandardInformation, Times, tags},
@@ -529,25 +529,27 @@ impl Files {
         let (mut rest, extra) = out.split_at_mut(batched);
         let per = table.batches.len().div_ceil(threads.max(1)).max(1);
         std::thread::scope(|scope| {
+            let mut workers = Vec::new();
             for group in table.batches.chunks(per) {
                 let len: usize = group.iter().map(|batch| batch.links.len()).sum();
                 let available = rest.len();
                 let (slots, more) = std::mem::take(&mut rest).split_at_mut(len.min(available));
                 rest = more;
-                scope.spawn(move || {
+                workers.push(scope.spawn(move || {
                     let links = group.iter().flat_map(|batch| batch.links.iter());
                     for (slot, link) in slots.iter_mut().zip(links) {
                         if !link.alias {
                             *slot = self.index.locate(link.parent).unwrap_or(NONE);
                         }
                     }
-                });
+                }));
             }
             for (slot, link) in extra.iter_mut().zip(&table.extra) {
                 if !link.alias {
                     *slot = self.index.locate(link.parent).unwrap_or(NONE);
                 }
             }
+            join_all(workers);
         });
         out
     }
