@@ -22,7 +22,7 @@ use crate::{
     index::{DirId, DirectoryBatch, DirectoryIndex, IndexBuilder, NONE, PathPolicy, best_name},
     record::Record,
     records,
-    scan::{Chunk, Entry as ScanEntry, Projection, Scan},
+    scan::{Chunk, Entry as ScanEntry, Projection, Scan, join_all},
     source::ReadAt,
     time::unix_seconds_u32,
     types,
@@ -556,21 +556,23 @@ impl Usage {
             }
         };
         std::thread::scope(|scope| {
+            let mut workers = Vec::new();
             for group in self.batches.chunks(per) {
                 let len: usize = group.iter().map(|batch| batch.entries.len()).sum();
                 let available = rest.len();
                 let (slots, more) = core::mem::take(&mut rest).split_at_mut(len.min(available));
                 rest = more;
-                scope.spawn(move || {
+                workers.push(scope.spawn(move || {
                     let entries = group.iter().flat_map(|batch| batch.entries.iter());
                     for (slot, entry) in slots.iter_mut().zip(entries) {
                         locate(slot, entry);
                     }
-                });
+                }));
             }
             for (slot, entry) in extra.iter_mut().zip(&self.extra.entries) {
                 locate(slot, entry);
             }
+            join_all(workers);
         });
         out
     }

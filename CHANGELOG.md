@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- `Scan::run`, `Files::parents` and `Usage::parents` return only once their threads have
+  ended, their thread-locals' destructors included: a scope waits for its threads' closures,
+  not for the threads, and the `mft_scan` fuzz target's leak check caught a worker still ending.
+  A worker's panic goes on as itself, rather than as the scope's own.
+
 ## 0.1.1 (2026-10-25)
 
 - `runs::Pairs`: mapping pairs read and checked without counting VCNs, each a `runs::Pair`
