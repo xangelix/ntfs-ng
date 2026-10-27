@@ -103,15 +103,17 @@ jobs:
       - name: Start from no measurements
         run: rm -rf target/criterion target/criterion-ab
 
-      # The base revision and this one take turns (base, head, head, base), so that both see
-      # the same machine; a benchmark changed only if its runs say so beyond their own spread.
+      # The base revision and this one take turns group by group (base, head, head, base, four
+      # runs of each), so that the runs compared lie seconds apart and see the same machine; a
+      # benchmark changed only if its runs say so beyond their own spread.
       - name: Compare with the base revision, runs alternating
         if: github.event_name == 'pull_request'
         env:
           NTFS_NG_BENCH_RECORDS: "100000"
+          ROUNDS: "4"
         run: |
           ./scripts/criterion-ab.sh "${{ github.event.pull_request.base.sha }}" \
-            --warm-up-time 1 --measurement-time 3 > criterion-ab.md \
+            --warm-up-time 1 --measurement-time 2 > criterion-ab.md \
             || echo "::notice::the base revision has no comparable benchmarks"
           tee -a "$GITHUB_STEP_SUMMARY" < criterion-ab.md
 

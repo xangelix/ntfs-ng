@@ -62,8 +62,9 @@ The benchmark suites go well beyond that: Criterion micro-benchmarks of every pa
 order, record size and stream kind (`benches/engine.rs`), and the parsers' instruction counts
 under Valgrind (`benches/instructions.rs`, with [gungraun](https://docs.rs/gungraun)), which are
 exact whatever the machine's load. Every pull request is compared with its base revision on
-both: wall-clock runs of the two take turns on one runner (`scripts/criterion-ab.sh`), and
-instructions are counted for each (`.github/workflows/bench.yml`).
+both: wall-clock runs of the two take turns on one runner, group by group
+(`scripts/criterion-ab.sh`), and instructions are counted for each
+(`.github/workflows/bench.yml`).
 
 ## Guarantees
 
