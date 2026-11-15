@@ -67,6 +67,10 @@ pub struct Entry {
     pub created: u32,
     /// Last modified, in Unix seconds.
     pub modified: u32,
+    /// Last accessed, in Unix seconds.  RANFT ADDED
+    pub accessed: u32,                // RANFT ADDED
+    /// File attributes.                 RANFT ADDED
+    pub attributes: u32,              // RANFT ADDDED
     /// The name, in its batch's arena.
     name_start: u32,
     name_len: u16,
@@ -116,6 +120,8 @@ struct Info {
     allocated: u64,
     created: u32,
     modified: u32,
+    accessed: u32,   // RANFT ADDED
+    attributes: u32, // RANFT ADDED
     flags: u8,
 }
 
@@ -128,6 +134,8 @@ impl Info {
             allocated: self.allocated,
             created: self.created,
             modified: self.modified,
+            accessed: self.accessed,     // RANFT ADDED
+            attributes: self.attributes, // RANFT ADDED
             name_start: name.0,
             name_len: name.1,
             flags: self.flags | if dos { flags::DOS } else { 0 },
@@ -197,13 +205,17 @@ impl UsageProjection {
             };
             match attribute.type_code() {
                 types::STANDARD_INFORMATION => {
-                    if let Ok(value) = attribute.value()
-                        && let Some(times) = StandardInformation::times_of(value)
-                    {
+                if let Ok(value) = attribute.value() {
+                    if let Some(times) = StandardInformation::times_of(value) {
                         info.created = unix_seconds_u32(times.created);
                         info.modified = unix_seconds_u32(times.modified);
+                        info.accessed = unix_seconds_u32(times.accessed);  // RANFT ADDED
+                    }
+                    if let Ok(si) = StandardInformation::parse(value) {    // RANFT ADDED
+                        info.attributes = si.attributes;                   // RANFT ADDED
                     }
                 }
+            }
                 types::FILE_NAME => {
                     let Ok(value) = attribute.value() else {
                         continue;
@@ -755,6 +767,8 @@ mod tests {
                     entry.allocated,
                     entry.created,
                     entry.modified,
+                    entry.accessed,   // RANFT ADDED
+                    entry.attributes, // RANFT ADDED
                     flags,
                     usage.index.reference(parents[id as usize]),
                 ),
@@ -794,7 +808,8 @@ mod tests {
                     file.size,
                     file.allocated,
                     unix_seconds_u32(file.times.created),
-                    unix_seconds_u32(file.times.modified),
+                    unix_seconds_u32(file.times.modified), // RANFT ADDED
+                    file.attributes,                       // RANFT ADDED
                     flags,
                     files.index.reference(parents[id as usize]),
                 ),

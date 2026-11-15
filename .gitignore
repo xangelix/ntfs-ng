@@ -5,3 +5,5 @@
 /fuzz/coverage
 /corpora
 /bench-results
+.vs/
+
