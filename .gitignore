@@ -5,3 +5,5 @@
 /fuzz/coverage
 /corpora
 /bench-results
+.vs/
+/src/usage.rs-WITH-RANFT-COMMENTS
